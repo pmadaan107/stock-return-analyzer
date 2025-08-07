@@ -35,6 +35,7 @@ if st.button("Analyze"):
         CAGR = (end_price / start_price) ** (1 / num_years) - 1
         Max_return= CAGR + 2 * annualized_std
         Min_return= CAGR - 2 * annualized_std
+        annual_return = (1 + avg_daily_return) ** 252 - 1
     
 
 
@@ -45,6 +46,8 @@ if st.button("Analyze"):
         st.write(f"**Standard Deviation:** {annualized_std:.4%}")
         st.write(f"**Max Return:** {Max_return:.4%}")
         st.write(f"**Min Return:** {Min_return:.4%}")
+        st.write(f"**Annual Return:** {Annual_return:.4%}")
+
 
 
 
