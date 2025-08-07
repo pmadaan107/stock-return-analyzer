@@ -43,17 +43,7 @@ if st.button("Analyze"):
         st.write(f"**Total Return:** {total_return * 100:.2f}%")
 
    
-        data['cumulative_return'] = (1 + data['daily_return']).cumprod()
-
-        # Plot
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(data['cumulative_return'], label="Cumulative Return")
-        ax.set_title(f"{ticker} Growth of $1")
-        ax.set_xlabel("Date")
-        ax.set_ylabel("Cumulative Value")
-        ax.grid(True)
-        ax.legend()
-        st.pyplot(fig)
+    
 
     except Exception as e:
         st.error(f"Error: {e}")
