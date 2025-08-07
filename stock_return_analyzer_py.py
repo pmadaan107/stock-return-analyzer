@@ -39,7 +39,7 @@ if st.button("Analyze"):
         st.subheader(f"{ticker} Performance Metrics")
         st.write(f"**CAGR:** {CAGR:.2%}")
         st.write(f"**Average Daily Return:** {avg_daily_return:.4%}")
-        st.write(f"**Standard Deviation:** {std_dev:.4%}")
+        st.write(f"**Standard Deviation:** {std_dev:.4}")
 
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.plot(data['price'], label="Price")
