@@ -26,7 +26,7 @@ if st.button("Analyze"):
         trading_days = len(data)
        # Metrics
         avg_daily_return = float(data['daily_return'].mean())
-        std_dev = float(data['daily_return'].std())
+        std_dev = float(data['price'].std())
         
         start_price = float(data['price'].iloc[0])
         end_price = float(data['price'].iloc[-1])
