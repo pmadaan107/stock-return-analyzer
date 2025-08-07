@@ -38,10 +38,11 @@ if st.button("Analyze"):
 
         # Show metrics
         st.subheader(f"{ticker} Performance Metrics")
-        st.write(f"**CAGR:** {CAGR:.2%}")
-        st.write(f"**Average Daily Return:** {avg_daily_return:.4%}")
-        st.write(f"**Standard Deviation:** {std_dev:.4%}")
-        st.write(f"**Total Return:** {(data['cumulative_return'].iloc[-1] - 1) * 100:.2f}%")
+        st.metric("CAGR", f"{CAGR:.2%}")
+        st.metric("Average Daily Return", f"{avg_daily_return:.4%}")
+        st.metric("Standard Deviation", f"{std_dev:.4%}")
+        st.metric("Total Return", f"{(data['cumulative_return'].iloc[-1] - 1) * 100:.2f}%")
+
 
         # Plot
         fig, ax = plt.subplots(figsize=(10, 5))
