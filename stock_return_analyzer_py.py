@@ -26,8 +26,8 @@ if st.button("Analyze"):
         trading_days = len(data)
        # Metrics
         avg_daily_return = float(data['daily_return'].mean())
-        std_dev = float(data['price'].std())
-        
+        std_dev = float(data['daily_return'].std())
+        annualized_std = daily_std * np.sqrt(252)
         start_price = float(data['price'].iloc[0])
         end_price = float(data['price'].iloc[-1])
         num_years = (end_date - start_date).days / 365.25
@@ -39,7 +39,7 @@ if st.button("Analyze"):
         st.subheader(f"{ticker} Performance Metrics")
         st.write(f"**CAGR:** {CAGR:.2%}")
         st.write(f"**Average Daily Return:** {avg_daily_return:.4%}")
-        st.write(f"**Standard Deviation:** {std_dev:.4}")
+        st.write(f"**Standard Deviation:** {annualized_std:.4%}")
 
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.plot(data['price'], label="Price")
