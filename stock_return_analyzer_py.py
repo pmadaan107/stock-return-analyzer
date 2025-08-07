@@ -46,7 +46,7 @@ if st.button("Analyze"):
         st.write(f"**Standard Deviation:** {annualized_std:.4%}")
         st.write(f"**Max Return:** {Max_return:.4%}")
         st.write(f"**Min Return:** {Min_return:.4%}")
-        st.write(f"**Annual Return:** {Annual_return:.4%}")
+        st.write(f"**Annual Return:** {annual_return:.4%}")
 
 
 
