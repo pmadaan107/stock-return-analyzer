@@ -15,7 +15,7 @@ end_date = st.date_input("End Date:", value=pd.to_datetime("2024-12-31"))
 if st.button("Analyze"):
     try:
         # Download data
-        data = yf.download(ticker, start=start_date, end=end_date)
+        data = yf.download(ticker, start=start_date, end=end_date,auto_adjust=True)
         data = data[['Close']].rename(columns={'Close': 'price'})
 
         # Calculate returns
