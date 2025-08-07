@@ -39,11 +39,11 @@ if st.button("Analyze"):
         data['cumulative_return'] = (1 + data['daily_return']).cumprod()
 
         # Show metrics
-            st.subheader(f"{ticker} Performance Metrics")
-            st.write(f"**CAGR:** {CAGR:.2%}")
-            st.write(f"**Average Daily Return:** {avg_daily_return:.4%}")
-            st.write(f"**Standard Deviation:** {std_dev:.4%}")
-            st.write(f"**Total Return:** {total_return * 100:.2f}%")
+        st.subheader(f"{ticker} Performance Metrics")
+        st.write(f"**CAGR:** {CAGR:.2%}")
+        st.write(f"**Average Daily Return:** {avg_daily_return:.4%}")
+        st.write(f"**Standard Deviation:** {std_dev:.4%}")
+        st.write(f"**Total Return:** {total_return * 100:.2f}%")
 
 
 
