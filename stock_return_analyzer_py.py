@@ -33,8 +33,8 @@ if st.button("Analyze"):
         end_price = float(data['price'].iloc[-1])
         num_years = (end_date - start_date).days / 365.25
         CAGR = (end_price / start_price) ** (1 / num_years) - 1
-        Max_return= avg_daily_return + 2 * annualized_std
-        Min_return= avg_daily_return - 2 * annualized_std
+        Max_return= CAGR + 2 * annualized_std
+        Min_return= CAGR - 2 * annualized_std
     
 
 
