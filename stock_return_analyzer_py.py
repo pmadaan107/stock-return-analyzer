@@ -35,9 +35,6 @@ if st.button("Analyze"):
         total_return = float(data['cumulative_return'].iloc[-1] - 1)
 
 
-        # Cumulative return for plotting
-        data['cumulative_return'] = (1 + data['daily_return']).cumprod()
-
         # Show metrics
         st.subheader(f"{ticker} Performance Metrics")
         st.write(f"**CAGR:** {CAGR:.2%}")
@@ -45,7 +42,8 @@ if st.button("Analyze"):
         st.write(f"**Standard Deviation:** {std_dev:.4%}")
         st.write(f"**Total Return:** {total_return * 100:.2f}%")
 
-
+   
+        data['cumulative_return'] = (1 + data['daily_return']).cumprod()
 
         # Plot
         fig, ax = plt.subplots(figsize=(10, 5))
