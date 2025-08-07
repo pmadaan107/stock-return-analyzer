@@ -24,24 +24,27 @@ if st.button("Analyze"):
 
         # Metrics
         trading_days = len(data)
-        avg_daily_return = data['daily_return'].mean()
-        std_dev = data['daily_return'].std()
-
-        # CAGR formula
-        start_price = data['price'].iloc[0]
-        end_price = data['price'].iloc[-1]
+       # Metrics
+        avg_daily_return = float(data['daily_return'].mean())
+        std_dev = float(data['daily_return'].std())
+        
+        start_price = float(data['price'].iloc[0])
+        end_price = float(data['price'].iloc[-1])
         num_years = (end_date - start_date).days / 365.25
         CAGR = (end_price / start_price) ** (1 / num_years) - 1
+        total_return = float(data['cumulative_return'].iloc[-1] - 1)
+
 
         # Cumulative return for plotting
         data['cumulative_return'] = (1 + data['daily_return']).cumprod()
 
         # Show metrics
-        st.subheader(f"{ticker} Performance Metrics")
-        st.metric("CAGR", f"{CAGR:.2%}")
-        st.metric("Average Daily Return", f"{avg_daily_return:.4%}")
-        st.metric("Standard Deviation", f"{std_dev:.4%}")
-        st.metric("Total Return", f"{(data['cumulative_return'].iloc[-1] - 1) * 100:.2f}%")
+            st.subheader(f"{ticker} Performance Metrics")
+            st.write(f"**CAGR:** {CAGR:.2%}")
+            st.write(f"**Average Daily Return:** {avg_daily_return:.4%}")
+            st.write(f"**Standard Deviation:** {std_dev:.4%}")
+            st.write(f"**Total Return:** {total_return * 100:.2f}%")
+
 
 
         # Plot
