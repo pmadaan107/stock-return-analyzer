@@ -41,7 +41,7 @@ if st.button("Analyze"):
         st.write(f"**Average Daily Return:** {avg_daily_return:.4%}")
         st.write(f"**Standard Deviation:** {std_dev:.4%}")
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+        fig, ax = plt.subplots(figsize=(10, 5))
         ax.plot(data['Close'], label="Price")
         ax.set_title(f"{ticker} Growth of $1")
         ax.set_xlabel("Date")
