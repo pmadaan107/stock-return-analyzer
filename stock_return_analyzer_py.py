@@ -32,7 +32,7 @@ if st.button("Analyze"):
         end_price = float(data['price'].iloc[-1])
         num_years = (end_date - start_date).days / 365.25
         CAGR = (end_price / start_price) ** (1 / num_years) - 1
-        total_return = float(data['cumulative_return'].iloc[-1] - 1)
+    
 
 
         # Show metrics
@@ -40,8 +40,7 @@ if st.button("Analyze"):
         st.write(f"**CAGR:** {CAGR:.2%}")
         st.write(f"**Average Daily Return:** {avg_daily_return:.4%}")
         st.write(f"**Standard Deviation:** {std_dev:.4%}")
-        st.write(f"**Total Return:** {total_return * 100:.2f}%")
-
+       
    
     
 
