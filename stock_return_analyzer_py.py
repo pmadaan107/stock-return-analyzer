@@ -28,7 +28,7 @@ if st.button("Analyze"):
     try:
         # Download data
         data = yf.download(ticker, start=start_date, end=end_date)
-        data = data[['Close']].rename(columns={'Adj Close': 'price'})
+        data = data[['Close']].rename(columns={'Close': 'price'})
 
         # Calculate returns
         data['daily_return'] = data['price'].pct_change()
