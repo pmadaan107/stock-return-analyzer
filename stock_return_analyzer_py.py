@@ -27,7 +27,7 @@ if st.button("Analyze"):
        # Metrics
         avg_daily_return = float(data['daily_return'].mean())
         std_dev = float(data['daily_return'].std())
-        annualized_std = daily_std * np.sqrt(252)
+        annualized_std = std_dev * np.sqrt(252)
         start_price = float(data['price'].iloc[0])
         end_price = float(data['price'].iloc[-1])
         num_years = (end_date - start_date).days / 365.25
