@@ -201,7 +201,12 @@ else:
     # Ranges
     r_day_lo, r_day_hi = horizon_range_from_daily(mean_d, std_d, 1, N, use_log)
     r_mon_lo, r_mon_hi = horizon_range_from_daily(mean_d, std_d, DAYS_PER_MONTH, N, use_log)
-    r_yr_lo,  r_yr_hi  = horizon_range_from_daily(mean_d, std_d, PPY, N, use_log)
+   # Yearly volatility from daily std
+    sigma_year = std_d * np.sqrt(PPY)
+        
+   # Yearly range using CAGR as the center
+    r_yr_lo = growth_cagr - N * sigma_year
+    r_yr_hi = growth_cagr + N * sigma_year
 
     # =========================
     # Stat cards row
