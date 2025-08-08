@@ -43,7 +43,7 @@ if st.button("Analyze"):
         st.subheader(f"{ticker} Performance Metrics")
         st.write(f"**CAGR:** {CAGR:.2%}")
         st.write(f"**Average Daily Return:** {avg_daily_return:.4%}")
-        st.write(f"**Standard Deviation:** {annualized_std:.4%}")
+        st.write(f"**Annualized Standard Deviation:** {annualized_std:.4%}")
         st.write(f"**Max Return:** {Max_return:.4%}")
         st.write(f"**Min Return:** {Min_return:.4%}")
         st.write(f"**Annual Return:** {annual_return:.4%}")
