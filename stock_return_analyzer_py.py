@@ -6,18 +6,17 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from datetime import date
 
-st.set_page_config(page_title="📊 Return Range Explorer", layout="wide")
+st.set_page_config(page_title="Return Range Explorer", layout="wide")
 
-# -----------------------------
-# CONSTANTS
-# -----------------------------
-# Periods per year (trading calendar approximation)
-PPY = 252
-DAYS_PER_MONTH = 21  # average trading days/month
+# =========================
+# Constants
+# =========================
+PPY = 252              # trading days per year
+DAYS_PER_MONTH = 21    # avg trading days per month
 
-# -----------------------------
-# CORE FUNCTIONS
-# -----------------------------
+# =========================
+# Core functions
+# =========================
 def get_price_series(ticker, start_date, end_date):
     data = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
     if data.empty:
@@ -28,17 +27,16 @@ def get_price_series(ticker, start_date, end_date):
     return s
 
 def compute_returns(price: pd.Series, use_log: bool):
-    """Return a Series of daily returns (simple or log)."""
     if price.empty or len(price) < 3:
         return pd.Series(dtype=float)
-    return (np.log(price / price.shift(1)) if use_log else price.pct_change()).dropna()
+    rets = np.log(price / price.shift(1)) if use_log else price.pct_change()
+    return rets.dropna()
 
 def annualize_from_daily(mean_d, std_d, use_log: bool):
-    """Annualized mean return & volatility from daily stats."""
     if use_log:
         ann_return = np.exp(mean_d * PPY) - 1
     else:
-        ann_return = (1 + mean_d) ** PPY - 1  # approximation in simple space
+        ann_return = (1 + mean_d) ** PPY - 1
     ann_vol = std_d * np.sqrt(PPY)
     return float(ann_return), float(ann_vol)
 
@@ -52,14 +50,6 @@ def cagr(price: pd.Series):
     return (end / start) ** (1 / years) - 1
 
 def horizon_range_from_daily(mean_d, std_d, periods: int, N: int, use_log: bool):
-    """
-    Expected total return range over 'periods' trading days using mean ± N*std.
-    - If use_log: aggregate in log space (exact for normal-lognormal model).
-      low/high = exp((mu_d * p) ± N * (sigma_d * sqrt(p))) - 1
-    - If simple: use compounding for mean and sqrt-time for vol (approx).
-      range ≈ ( (1+mean_d)^p - 1 ) ± N * (std_d * sqrt(p))
-      Lower is floored at -100%.
-    """
     if use_log:
         mu_h = mean_d * periods
         sigma_h = std_d * np.sqrt(periods)
@@ -68,47 +58,198 @@ def horizon_range_from_daily(mean_d, std_d, periods: int, N: int, use_log: bool)
     else:
         mean_h = (1 + mean_d) ** periods - 1
         std_h = std_d * np.sqrt(periods)
-        low = mean_h - N * std_h
+        low = max(mean_h - N * std_h, -1.0)
         high = mean_h + N * std_h
-        low = max(low, -1.0)  # cap at -100%
     return float(low), float(high)
 
-def mc_price_cone(S0: float, mu_ann: float, sigma_ann: float, days: int = 252, paths: int = 300, seed: int = 7):
-    """Simple GBM Monte Carlo to draw a 1-year price cone."""
+def mc_price_cone(S0: float, mu_ann: float, sigma_ann: float, days: int = 252, paths: int = 400, seed: int = 7):
     if S0 <= 0 or np.isnan(mu_ann) or np.isnan(sigma_ann) or sigma_ann < 0:
         return None
     rng = np.random.default_rng(seed)
     dt = 1 / PPY
-    mu = mu_ann
-    sigma = sigma_ann
     out = np.empty((days + 1, paths))
     out[0, :] = S0
+    drift = (mu_ann - 0.5 * sigma_ann**2) * dt
+    vol_dt = sigma_ann * np.sqrt(dt)
     for t in range(1, days + 1):
         z = rng.standard_normal(paths)
-        out[t, :] = out[t - 1, :] * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * z)
+        out[t, :] = out[t - 1, :] * np.exp(drift + vol_dt * z)
     return out
 
-# -----------------------------
-# SIDEBAR
-# -----------------------------
-st.sidebar.header("⚙️ Controls")
+# =========================
+# Sidebar Controls
+# =========================
+st.sidebar.markdown("## ⚙️ Controls")
 ticker = st.sidebar.text_input("Ticker", value="AAPL").strip().upper()
 start_date = st.sidebar.date_input("Start Date", value=date(2020, 1, 1))
 end_date = st.sidebar.date_input("End Date", value=date.today())
 use_log = st.sidebar.toggle("Use log returns (recommended)", value=True)
 N = st.sidebar.selectbox("Confidence (±σ)", [1, 2, 3], index=1)
 invest_amt = st.sidebar.number_input("Investment Amount ($)", min_value=0.0, value=10000.0, step=100.0)
-mc_paths = st.sidebar.slider("Monte Carlo paths", 100, 1000, 400, step=50)
-analyze = st.sidebar.button("🚀 Analyze", type="primary")
+mc_paths = st.sidebar.slider("Monte Carlo paths", 100, 1000, 500, step=50)
+go = st.sidebar.button("🚀 Run Analysis", type="primary")
 
-# -----------------------------
-# MAIN
-# -----------------------------
-st.title("📊 Return Range Explorer")
-st.caption("Clean ranges for day / month / year + a simple Monte Carlo cone. No fuss.")
+# =========================
+# Global CSS (HTML styling)
+# =========================
+st.markdown("""
+<style>
+/* Overall page */
+.main {
+  padding-top: 0 !important;
+}
+:root {
+  --bg:#0f1220;
+  --card:#151a2e;
+  --card2:#11172a;
+  --text:#e7ecff;
+  --muted:#92a0c7;
+  --accent:#6aa0ff;
+  --success:#38d996;
+  --warn:#f7b955;
+  --danger:#ff6a6a;
+}
 
-if analyze:
-    # -- Data
+/* App header */
+.hero {
+  background: radial-gradient(1000px 400px at 10% -10%, rgba(106,160,255,0.25), transparent 60%),
+              radial-gradient(800px 300px at 110% 10%, rgba(56,217,150,0.20), transparent 60%),
+              linear-gradient(160deg, #0F1320, #0a0d18);
+  border-radius: 18px;
+  padding: 26px 28px;
+  margin-bottom: 18px;
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 0 60px rgba(255,255,255,0.03);
+}
+.hero h1 {
+  margin: 0;
+  font-size: 30px;
+  letter-spacing: 0.3px;
+}
+.hero p {
+  color: var(--muted);
+  margin: 6px 0 0 0;
+}
+
+/* Stat cards */
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 14px;
+  margin: 8px 0 18px;
+}
+.card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 16px;
+  color: var(--text);
+  box-shadow: 0 12px 22px rgba(0,0,0,0.25);
+  position: relative;
+  overflow: hidden;
+  transition: transform .15s ease, border-color .15s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(106,160,255,0.35);
+}
+.card .label {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.card .value {
+  font-size: 24px;
+  margin-top: 4px;
+}
+
+/* Range tiles */
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(240px, 1fr));
+  gap: 14px;
+}
+.tile {
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 16px;
+  color: var(--text);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+}
+.tile h3 {
+  margin-top: 0;
+  font-size: 18px;
+}
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.07);
+  color: var(--muted);
+  margin-left: 6px;
+}
+.pill {
+  display: inline-block;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+  margin: 4px 4px 0 0;
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+}
+.pill.green { background: rgba(56,217,150,0.18); }
+.pill.red   { background: rgba(255,106,106,0.18); }
+
+/* Section header */
+.section-title {
+  margin: 16px 0 8px;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 20px;
+}
+
+/* Dark background for charts */
+.block {
+  background: var(--card2);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  padding: 12px;
+  margin-top: 14px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+}
+
+/* Make Streamlit body darker */
+section[data-testid="stSidebar"] div[role="radiogroup"] label { color: var(--text) }
+html, body, [data-testid="stAppViewContainer"] {
+  background: var(--bg);
+  color: var(--text);
+}
+[data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+  color: var(--text) !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# =========================
+# Header
+# =========================
+st.markdown(f"""
+<div class="hero">
+  <h1>📊 Return Range Explorer</h1>
+  <p>Clean day / month / year ranges (±σ) and a simple 1-year Monte Carlo price cone — for {ticker or "your ticker"}.</p>
+</div>
+""", unsafe_allow_html=True)
+
+# =========================
+# Analysis
+# =========================
+if not go:
+    st.info("Set your options in the left sidebar and click **Run Analysis**. Try AAPL / MSFT / AMZN.")
+else:
     px = get_price_series(ticker, start_date, end_date)
     if px.empty:
         st.error("No data found. Try another ticker or a wider date range.")
@@ -124,91 +265,128 @@ if analyze:
     ann_return, ann_vol = annualize_from_daily(mean_d, std_d, use_log=use_log)
     growth_cagr = cagr(px)
 
-    # -- Layout
-    tab1, tab2 = st.tabs(["🎯 Expected Ranges", "🌀 Monte Carlo (1 year)"])
+    # Ranges
+    r_day_lo, r_day_hi = horizon_range_from_daily(mean_d, std_d, 1, N, use_log)
+    r_mon_lo, r_mon_hi = horizon_range_from_daily(mean_d, std_d, DAYS_PER_MONTH, N, use_log)
+    r_yr_lo,  r_yr_hi  = horizon_range_from_daily(mean_d, std_d, PPY, N, use_log)
 
-    # =============================
-    # TAB 1: EXPECTED RANGES
-    # =============================
-    with tab1:
-        st.subheader(f"Results for {ticker}")
-        colA, colB, colC, colD = st.columns(4)
-        with colA:
-            st.metric("Last Price", f"${last_price:,.2f}")
-        with colB:
-            st.metric("CAGR (start→end)", f"{0 if np.isnan(growth_cagr) else growth_cagr:.2%}")
-        with colC:
-            st.metric("Annualized Return (from daily avg)", f"{ann_return:.2%}")
-        with colD:
-            st.metric("Annualized Volatility (Std Dev)", f"{ann_vol:.2%}")
+    # =========================
+    # Stat cards
+    # =========================
+    st.markdown('<div class="grid-4">', unsafe_allow_html=True)
+    st.markdown(f"""
+      <div class="card">
+        <div class="label">Last Price</div>
+        <div class="value">${last_price:,.2f}</div>
+      </div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"""
+      <div class="card">
+        <div class="label">CAGR (start → end)</div>
+        <div class="value">{(0 if np.isnan(growth_cagr) else growth_cagr):.2%}</div>
+      </div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"""
+      <div class="card">
+        <div class="label">Annualized Return</div>
+        <div class="value">{ann_return:.2%}</div>
+      </div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"""
+      <div class="card">
+        <div class="label">Annualized Volatility</div>
+        <div class="value">{ann_vol:.2%}</div>
+      </div>
+    """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown("---")
-        st.markdown(f"### 📆 Min / Max **Total Return** you can expect (±{N}σ)")
+    # =========================
+    # Ranges Section
+    # =========================
+    st.markdown(f'<div class="section-title">🎯 Expected Total Return Ranges (±{N}σ)</div>', unsafe_allow_html=True)
 
-        # Compute ranges for Day / Month / Year
-        ranges = {
-            "Day": horizon_range_from_daily(mean_d, std_d, 1, N, use_log),
-            "Month (~21d)": horizon_range_from_daily(mean_d, std_d, DAYS_PER_MONTH, N, use_log),
-            "Year (252d)": horizon_range_from_daily(mean_d, std_d, PPY, N, use_log),
-        }
+    def tile_html(title, low_r, high_r):
+        low_price = last_price * (1 + low_r)
+        high_price = last_price * (1 + high_r)
+        invest_low = invest_amt * (1 + low_r) if invest_amt > 0 else None
+        invest_high = invest_amt * (1 + high_r) if invest_amt > 0 else None
+        invest_line = ""
+        if invest_amt > 0:
+            invest_line = f'<div class="pill">💵 ${invest_amt:,.0f} → ${invest_low:,.0f} → ${invest_high:,.0f}</div>'
+        return f"""
+        <div class="tile">
+          <h3>{title} <span class="badge">{'Log' if use_log else 'Simple'} returns</span></h3>
+          <div class="pill red">📉 Min return: {low_r:.2%}</div>
+          <div class="pill green">📈 Max return: {high_r:.2%}</div>
+          <div class="pill">💲 Price range: ${low_price:,.2f} → ${high_price:,.2f}</div>
+          {invest_line}
+        </div>
+        """
 
-        col1, col2, col3 = st.columns(3)
-        for col, (label, (low_r, high_r)) in zip([col1, col2, col3], ranges.items()):
-            with col:
-                st.markdown(f"#### {label}")
-                st.write(f"**Return Range:** {low_r:.2%} → {high_r:.2%}")
-                low_price = last_price * (1 + low_r)
-                high_price = last_price * (1 + high_r)
-                st.write(f"**Price Range:** ${low_price:,.2f} → ${high_price:,.2f}")
-                if invest_amt > 0:
-                    lower_dollar = invest_amt * (1 + low_r)
-                    upper_dollar = invest_amt * (1 + high_r)
-                    st.write(f"**${invest_amt:,.0f} → ${lower_dollar:,.0f} → ${upper_dollar:,.0f}**")
+    st.markdown('<div class="grid-3">', unsafe_allow_html=True)
+    st.markdown(tile_html("Day", r_day_lo, r_day_hi), unsafe_allow_html=True)
+    st.markdown(tile_html("Month (~21 trading days)", r_mon_lo, r_mon_hi), unsafe_allow_html=True)
+    st.markdown(tile_html("Year (252 trading days)", r_yr_lo, r_yr_hi), unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown("##### Notes")
-        st.write(
-            "- Ranges use historical daily mean and volatility, scaled to each horizon.\n"
-            "- Log-returns give the most consistent scaling; simple returns use an approximation.\n"
-            "- ±σ ranges assume roughly normal returns, so real markets can exceed these bounds."
-        )
+    # =========================
+    # Price history (dark card)
+    # =========================
+    st.markdown('<div class="section-title">📈 Price History</div>', unsafe_allow_html=True)
+    st.markdown('<div class="block">', unsafe_allow_html=True)
+    st.line_chart(px.rename("Price"))
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown("### 📈 Price History")
-        st.line_chart(px.rename("Price"))
+    # =========================
+    # Monte Carlo Cone
+    # =========================
+    st.markdown('<div class="section-title">🌀 Monte Carlo Price Cone (1 Year)</div>', unsafe_allow_html=True)
+    st.caption("We simulate many price paths using your annualized return & volatility, then show the 25–75% and 5–95% bands (easy to read).")
+    paths = mc_price_cone(last_price, ann_return, ann_vol, days=PPY, paths=mc_paths)
 
-    # =============================
-    # TAB 2: MONTE CARLO
-    # =============================
-    with tab2:
-        st.subheader("Easy 1-Year Price Cone")
-        st.caption("We simulate many price paths using your annualized return & volatility. The shaded areas show typical outcomes.")
+    if paths is None:
+        st.warning("Could not simulate paths — check the inputs.")
+    else:
+        pct = np.percentile(paths, [5, 25, 50, 75, 95], axis=1)
+        t = np.arange(paths.shape[0])
 
-        paths = mc_price_cone(last_price, ann_return, ann_vol, days=PPY, paths=mc_paths)
-        if paths is None:
-            st.warning("Could not simulate paths—check your inputs.")
-        else:
-            percentiles = np.percentile(paths, [5, 25, 50, 75, 95], axis=1)
-            t = np.arange(paths.shape[0])
+        fig, ax = plt.subplots()
+        ax.fill_between(t, pct[0], pct[4], alpha=0.2, label="5–95% band")
+        ax.fill_between(t, pct[1], pct[3], alpha=0.3, label="25–75% band")
+        ax.plot(t, pct[2], label="Median (50th pct)")
+        ax.set_xlabel("Trading Days Ahead")
+        ax.set_ylabel("Simulated Price")
+        ax.legend(loc="best")
+        st.pyplot(fig, clear_figure=True)
 
-            fig, ax = plt.subplots()
-            ax.fill_between(t, percentiles[0], percentiles[4], alpha=0.2, label="5–95% band")
-            ax.fill_between(t, percentiles[1], percentiles[3], alpha=0.3, label="25–75% band")
-            ax.plot(t, percentiles[2], label="Median (50th pct)")
-            ax.set_xlabel("Trading Days Ahead")
-            ax.set_ylabel("Simulated Price")
-            ax.legend(loc="best")
-            st.pyplot(fig, clear_figure=True)
+        end5, end25, end50, end75, end95 = pct[0, -1], pct[1, -1], pct[2, -1], pct[3, -1], pct[4, -1]
+        # Nice HTML summary row
+        st.markdown("""
+        <div class="grid-3" style="margin-top:10px;">
+          <div class="tile">
+            <h3>Median Outcome</h3>
+            <div class="pill">Price ≈ ${:,.2f}</div>
+          </div>
+          <div class="tile">
+            <h3>Typical Range (25–75%)</h3>
+            <div class="pill">Price ≈ ${:,.2f} → ${:,.2f}</div>
+          </div>
+          <div class="tile">
+            <h3>Wide Range (5–95%)</h3>
+            <div class="pill">Price ≈ ${:,.2f} → ${:,.2f}</div>
+          </div>
+        </div>
+        """.format(end50, end25, end75, end5, end95), unsafe_allow_html=True)
 
-            end_pcts = percentiles[:, -1]
-            colL, colR = st.columns(2)
-            with colL:
-                st.metric("Median Price (≈ 50%)", f"${end_pcts[2]:,.2f}")
-                st.metric("Typical Range (25–75%)", f"${end_pcts[1]:,.2f} → ${end_pcts[3]:,.2f}")
-            with colR:
-                st.metric("Wide Range (5–95%)", f"${end_pcts[0]:,.2f} → ${end_pcts[4]:,.2f}")
-                st.caption("These are simulated outcomes, not guarantees.")
+    # Notes
+    st.markdown('<div class="section-title">ℹ️ Notes</div>', unsafe_allow_html=True)
+    st.markdown("""
+- Ranges use historical daily mean and volatility and scale them to each horizon.  
+- **Log returns** are generally better for compounding/aggregation.  
+- ±σ ranges rely on a normal-return assumption — real markets can exceed these bounds.  
+- The Monte Carlo cone is **illustrative**, not predictive.
+""")
 
-else:
-    st.info("Set your options in the sidebar and click **Analyze**. Try `AAPL`, `MSFT`, or `AMZN`.")
 
 
 
