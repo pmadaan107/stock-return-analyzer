@@ -149,7 +149,7 @@ invest_amt = st.sidebar.number_input("Investment Amount ($)", value=0, step=100)
 # =======================
 try:
     data = yf.download(ticker, start=start_date, end=end_date)
-    px = data['Adj Close'].dropna()
+    px = data['Close'].dropna()
 
     if len(px) < 2:
         st.error("Not enough data for the selected period.")
