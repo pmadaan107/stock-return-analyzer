@@ -3,290 +3,334 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import streamlit as st
-import io
-from datetime import date
 import matplotlib.pyplot as plt
+from datetime import date
 
-st.set_page_config(page_title="📊 Stock Return & Risk Analyzer", layout="wide")
+st.set_page_config(page_title="Return Range Explorer", layout="wide")
 
-# -----------------------------
-# CONSTANTS
-# -----------------------------
-FREQ_MAP = {
-    "Daily":   {"ppy": 252, "resample": None},
-    "Weekly":  {"ppy": 52,  "resample": "W-FRI"},
-    "Monthly": {"ppy": 12,  "resample": "M"},
-}
+# =========================
+# Constants (finance math)
+# =========================
+PPY = 252              # trading days per year
+DAYS_PER_MONTH = 21    # average trading days per month
 
-# -----------------------------
-# FUNCTIONS
-# -----------------------------
-def compute_returns(price_series: pd.Series, freq: str, use_log: bool):
-    """Resample prices, then compute simple or log returns."""
-    if FREQ_MAP[freq]["resample"]:
-        px = price_series.resample(FREQ_MAP[freq]["resample"]).last().dropna()
+# =========================
+# Core functions
+# =========================
+def get_price_series(ticker, start_date, end_date):
+    data = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
+    if data.empty:
+        return pd.Series(dtype=float)
+    price_col = "Adj Close" if "Adj Close" in data.columns else "Close"
+    s = pd.to_numeric(data[price_col].squeeze(), errors="coerce").dropna()
+    s.index = pd.to_datetime(s.index)
+    return s
+
+def compute_returns(price: pd.Series, use_log: bool):
+    if price.empty or len(price) < 3:
+        return pd.Series(dtype=float)
+    rets = np.log(price / price.shift(1)) if use_log else price.pct_change()
+    return rets.dropna()
+
+def annualize_from_daily(mean_d, std_d, use_log: bool):
+    ann_return = np.exp(mean_d * PPY) - 1 if use_log else (1 + mean_d) ** PPY - 1
+    ann_vol = std_d * np.sqrt(PPY)
+    return float(ann_return), float(ann_vol)
+
+def cagr(price: pd.Series):
+    if len(price) < 2:
+        return np.nan
+    start, end = float(price.iloc[0]), float(price.iloc[-1])
+    years = (price.index[-1] - price.index[0]).days / 365.25
+    if years <= 0 or start <= 0:
+        return np.nan
+    return (end / start) ** (1 / years) - 1
+
+def horizon_range_from_daily(mean_d, std_d, periods: int, N: int, use_log: bool):
+    if use_log:
+        mu_h = mean_d * periods
+        sigma_h = std_d * np.sqrt(periods)
+        low = np.exp(mu_h - N * sigma_h) - 1
+        high = np.exp(mu_h + N * sigma_h) - 1
     else:
-        px = price_series.dropna()
+        mean_h = (1 + mean_d) ** periods - 1
+        std_h = std_d * np.sqrt(periods)
+        low = max(mean_h - N * std_h, -1.0)
+        high = mean_h + N * std_h
+    return float(low), float(high)
 
-    if len(px) < 3:
-        return px, pd.Series(dtype=float)
-
-    rets = np.log(px / px.shift(1)).dropna() if use_log else px.pct_change().dropna()
-    return px, rets
-
-def annualize_mean_return(avg_period_return: float, ppy: int, use_log: bool) -> float:
-    """Annualized mean return from period mean."""
-    return float(np.exp(avg_period_return * ppy) - 1) if use_log else float((1 + avg_period_return) ** ppy - 1)
-
-def annualize_vol(period_std: float, ppy: int) -> float:
-    """sigma_annual = sigma_period * sqrt(ppy)"""
-    return float(period_std * np.sqrt(ppy))
-
-def compute_cagr(px) -> float:
-    """CAGR based on start and end prices."""
-    if isinstance(px, pd.DataFrame):
-        px = px.iloc[:, 0]
-    px = px.dropna()
-    if len(px) < 2:
-        return np.nan
-    idx = pd.to_datetime(px.index)
-    n_years = (idx[-1] - idx[0]).days / 365.25
-    if n_years <= 0:
-        return np.nan
-    start_price = float(px.iloc[0])
-    end_price = float(px.iloc[-1])
-    if start_price <= 0:
-        return np.nan
-    return (end_price / start_price) ** (1 / n_years) - 1
-
-def sharpe_ratio(ann_return: float, ann_vol: float, rf: float) -> float:
-    if ann_vol == 0 or np.isnan(ann_vol):
-        return np.nan
-    return (ann_return - rf) / ann_vol
-
-def bollinger_bands(price: pd.Series, window: int = 20, k: float = 2.0):
-    """Classic Bollinger Bands on price: SMA ± k * rolling_std(price)."""
-    sma = price.rolling(window=window).mean()
-    stdp = price.rolling(window=window).std()
-    upper = sma + k * stdp
-    lower = sma - k * stdp
-    return sma, upper, lower
-
-def rolling_annual_vol(returns: pd.Series, window: int, ppy: int):
-    """Rolling annualized volatility from period returns."""
-    return returns.rolling(window=window).std() * np.sqrt(ppy)
-
-def simulate_gbm_paths(S0: float, mu: float, sigma: float, days: int = 252, n_paths: int = 200, seed: int = 42):
-    """Monte Carlo GBM paths for price cone visualization."""
+def mc_price_cone(S0: float, mu_ann: float, sigma_ann: float, days: int = 252, paths: int = 500, seed: int = 11):
+    if S0 <= 0 or np.isnan(mu_ann) or np.isnan(sigma_ann) or sigma_ann < 0:
+        return None
     rng = np.random.default_rng(seed)
-    dt = 1/252
-    # preallocate
-    paths = np.empty((days+1, n_paths))
-    paths[0, :] = S0
-    # simulate
-    for t in range(1, days+1):
-        z = rng.standard_normal(n_paths)
-        paths[t, :] = paths[t-1, :] * np.exp((mu - 0.5 * sigma**2)*dt + sigma * np.sqrt(dt) * z)
-    return paths
+    dt = 1 / PPY
+    out = np.empty((days + 1, paths))
+    out[0, :] = S0
+    drift = (mu_ann - 0.5 * sigma_ann**2) * dt
+    vol_dt = sigma_ann * np.sqrt(dt)
+    for t in range(1, days + 1):
+        z = rng.standard_normal(paths)
+        out[t, :] = out[t - 1, :] * np.exp(drift + vol_dt * z)
+    return out
 
-def download_df_button(df: pd.DataFrame, filename: str, label: str):
-    csv = df.to_csv().encode("utf-8")
-    st.download_button(label=label, data=csv, file_name=filename, mime="text/csv")
-
-# -----------------------------
-# SIDEBAR (Controls)
-# -----------------------------
-st.sidebar.header("⚙️ Controls")
-tickers_raw = st.sidebar.text_input("Tickers (comma-separated)", value="AAPL, MSFT").upper()
-freq = st.sidebar.selectbox("Return Frequency", list(FREQ_MAP.keys()), index=0)
+# =========================
+# Sidebar Controls
+# =========================
+st.sidebar.markdown("## ⚙️ Controls")
+ticker = st.sidebar.text_input("Ticker", value="AAPL").strip().upper()
 start_date = st.sidebar.date_input("Start Date", value=date(2020, 1, 1))
 end_date = st.sidebar.date_input("End Date", value=date.today())
-use_log = st.sidebar.toggle("Use Log Returns (recommended)", value=True)
-sigma_choice = st.sidebar.selectbox("Confidence Level (σ)", [1, 2, 3], index=1)
+use_log = st.sidebar.toggle("Use log returns (recommended)", value=True)
+N = st.sidebar.selectbox("Confidence (±σ)", [1, 2, 3], index=1)
 invest_amt = st.sidebar.number_input("Investment Amount ($)", min_value=0.0, value=10000.0, step=100.0)
-rf_input = st.sidebar.number_input("Risk-free rate (annual, %)", value=2.0, step=0.25) / 100.0
-bb_window = st.sidebar.number_input("Bollinger window (days)", min_value=10, value=20, step=1)
-bb_k = st.sidebar.number_input("Bollinger k (std devs)", min_value=1.0, value=2.0, step=0.5)
-roll_vol_window = st.sidebar.number_input("Rolling Vol window (periods)", min_value=10, value=30, step=5)
-n_paths = st.sidebar.number_input("Monte Carlo paths", min_value=50, value=200, step=50)
-analyze = st.sidebar.button("🔍 Analyze", type="primary")
+mc_paths = st.sidebar.slider("Monte Carlo paths", 100, 2000, 700, step=100)
+go = st.sidebar.button("🚀 Run Analysis", type="primary")
 
-# -----------------------------
-# MAIN
-# -----------------------------
-st.title("📊 Stock Return & Risk Analyzer (Pro)")
+# =========================
+# Finance Theme CSS (bigger text)
+# =========================
+st.markdown("""
+<style>
+:root {
+  /* Finance palette */
+  --bg:#0b1220;        /* deep navy */
+  --panel:#0f1a2b;     /* card bg */
+  --panel2:#0c1526;    /* darker panel */
+  --text:#e6eefc;      /* light text */
+  --muted:#9db1d6;     /* muted text */
+  --green:#2ecc71;     /* money green */
+  --red:#ff5c5c;       /* loss red */
+  --gold:#f5c15c;      /* accent gold */
+  --blue:#3fa9ff;      /* accent blue */
+}
 
-if analyze:
-    tickers = [t.strip() for t in tickers_raw.split(",") if t.strip()]
-    if not tickers:
-        st.error("Please enter at least one ticker.")
-        st.stop()
+html, body, [data-testid="stAppViewContainer"] {
+  background: linear-gradient(180deg, #09111f, #0b1220 20%, #09111f 100%);
+  color: var(--text);
+  font-size: 18px; /* base bigger */
+}
+section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] span {
+  color: var(--text) !important;
+  font-size: 16px;
+}
+section[data-testid="stSidebar"] { background: #0a1322; }
 
-    # Download all tickers in one call where possible
-    try:
-        data_all = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True, progress=False)
-    except Exception as e:
-        st.error(f"Download error: {e}")
-        st.stop()
+.hero {
+  background: linear-gradient(140deg, #0d1628, #0a1221);
+  border: 1px solid #16233a;
+  border-radius: 18px;
+  padding: 28px 30px;
+  margin-bottom: 18px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.35);
+}
+.hero h1 { margin:0 0 4px 0; font-size: 34px; letter-spacing: .3px; }
+.hero p { color: var(--muted); margin: 2px 0 0 0; font-size: 18px; }
 
-    if data_all.empty:
-        st.error("No data found for these settings.")
-        st.stop()
+.grid-4 { display:grid; grid-template-columns:repeat(4,minmax(180px,1fr)); gap:16px; margin:8px 0 18px; }
+.card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border:1px solid #15243d;
+  border-radius:16px; padding:18px;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+  transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease;
+}
+.card:hover { transform: translateY(-2px); border-color:#25507f; box-shadow: 0 14px 32px rgba(0,0,0,0.45); }
+.card .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+.card .value { font-size: 28px; margin-top: 6px; font-weight: 600; }
+.card .value.green { color: var(--green); }
+.card .value.red { color: var(--red); }
+.card .value.gold { color: var(--gold); }
 
-    # Normalize to DataFrame with columns per ticker for Close/Adj Close
-    # yfinance shape differs for single vs multiple tickers. Handle both.
-    if isinstance(data_all.columns, pd.MultiIndex):
-        close_df = data_all["Adj Close"] if "Adj Close" in data_all.columns.levels[0] else data_all["Close"]
-    else:
-        # single ticker returns a Series per column; make DataFrame with one column name
-        col = "Adj Close" if "Adj Close" in data_all.columns else "Close"
-        close_df = data_all[[col]].rename(columns={col: tickers[0]})
+.section-title { margin:16px 0 8px; color: var(--text); font-weight:700; font-size: 22px; }
+.grid-3 { display:grid; grid-template-columns:repeat(3,minmax(260px,1fr)); gap:16px; }
+.tile {
+  background: var(--panel);
+  border:1px solid #17273f; border-radius:16px; padding:16px;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.35);
+}
+.tile h3 { margin-top:0; font-size: 20px; font-weight: 700; }
+.badge { display:inline-block; font-size:12px; padding:4px 10px; border-radius:999px; background:#102038; color: var(--muted); margin-left:8px; }
+.pill { display:inline-block; border-radius:10px; padding:7px 12px; font-size:15px; margin:6px 6px 0 0; background:#0f1a2b; border:1px solid #193154; }
+.pill.green { color: var(--green); border-color: #1b6b44; background: rgba(46,204,113,0.08); }
+.pill.red   { color: var(--red); border-color: #803b3b; background: rgba(255,92,92,0.08); }
+.pill.gold  { color: var(--gold); border-color: #7a6022; background: rgba(245,193,92,0.08); }
 
-    close_df = close_df.dropna(how="all")
-    close_df.index = pd.to_datetime(close_df.index)
+.block {
+  background: var(--panel2);
+  border:1px solid #162742; border-radius:16px; padding:14px; margin-top:14px;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.35);
+}
 
-    # ---------- MULTI-TICKER METRICS TABLE ----------
-    rows = []
-    details = {}
-    ppy = FREQ_MAP[freq]["ppy"]
+/* Make built-in metrics readable */
+[data-testid="stMetricValue"]{ font-size: 28px !important; }
+[data-testid="stMetricLabel"]{ font-size: 16px !important; color: var(--muted) !important; }
+</style>
+""", unsafe_allow_html=True)
 
-    for t in tickers:
-        if t not in close_df.columns:
-            continue
-        px_raw = pd.to_numeric(close_df[t], errors="coerce").dropna()
-        if px_raw.empty:
-            continue
+# =========================
+# Header
+# =========================
+st.markdown(f"""
+<div class="hero">
+  <h1>📈 Return Range Explorer — Finance Theme</h1>
+  <p>Day / month / year expected ranges (±σ), a return distribution view, and a simple 1-year Monte Carlo price cone — for {ticker or "your ticker"}.</p>
+</div>
+""", unsafe_allow_html=True)
 
-        px, rets = compute_returns(px_raw, freq=freq, use_log=use_log)
-        if rets.empty:
-            continue
-
-        avg_period_ret = float(rets.mean())
-        period_std = float(rets.std())
-        ann_return = annualize_mean_return(avg_period_ret, ppy, use_log)
-        ann_vol = annualize_vol(period_std, ppy)
-        cagr = compute_cagr(px)
-        sr = sharpe_ratio(ann_return, ann_vol, rf_input)
-
-        rows.append({
-            "Ticker": t,
-            f"{freq} Mean Ret": avg_period_ret,
-            f"{freq} Std Dev": period_std,
-            "Ann Return (mean)": ann_return,
-            "Ann Vol": ann_vol,
-            "CAGR": cagr,
-            "Sharpe": sr
-        })
-
-        details[t] = {"px": px, "rets": rets, "ann_return": ann_return, "ann_vol": ann_vol, "cagr": cagr}
-
-    if not rows:
-        st.error("No valid series to compute metrics.")
-        st.stop()
-
-    metrics_df = pd.DataFrame(rows).set_index("Ticker")
-    fmt_df = metrics_df.copy()
-    for c in fmt_df.columns:
-        if "Std Dev" in c or "Ret" in c or "Ann" in c or "CAGR" in c or "Vol" in c:
-            fmt_df[c] = fmt_df[c].map(lambda x: f"{x:.2%}" if pd.notna(x) else "")
-        if c == "Sharpe":
-            fmt_df[c] = fmt_df[c].map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
-
-    st.subheader("📋 Summary (Performance & Risk)")
-    st.dataframe(fmt_df, use_container_width=True)
-
-    download_df_button(metrics_df, "metrics.csv", "⬇️ Download metrics CSV")
-
-    # ---------- DETAILED SECTION FOR FIRST TICKER ----------
-    focus = tickers[0]
-    st.markdown(f"---\n## 🔎 Detailed View: **{focus}**")
-
-    px = details[focus]["px"]
-    rets = details[focus]["rets"]
-    ann_return = details[focus]["ann_return"]
-    ann_vol = details[focus]["ann_vol"]
-    cagr = details[focus]["cagr"]
-
-    N = sigma_choice
-    low_ann = ann_return - N * ann_vol
-    high_ann = ann_return + N * ann_vol
-    last_price = float(px.iloc[-1])
-    low_price = last_price * (1 + low_ann)
-    high_price = last_price * (1 + high_ann)
-
-    colP, colR = st.columns([2, 1])
-
-    with colP:
-        st.markdown("### 📈 Price with Bollinger Bands")
-        sma, upper, lower = bollinger_bands(px, window=int(bb_window), k=float(bb_k))
-
-        fig1, ax1 = plt.subplots()
-        ax1.plot(px.index, px.values, label="Price")
-        ax1.plot(sma.index, sma.values, label=f"SMA {bb_window}")
-        ax1.plot(upper.index, upper.values, label=f"Upper ({bb_k}σ)")
-        ax1.plot(lower.index, lower.values, label=f"Lower ({bb_k}σ)")
-        ax1.set_xlabel("Date")
-        ax1.set_ylabel("Price")
-        ax1.legend()
-        st.pyplot(fig1, clear_figure=True)
-
-    with colR:
-        st.markdown("### 🎯 Expected Annual Range")
-        st.metric("Last Price", f"${last_price:,.2f}")
-        st.metric("Annualized Return (mean)", f"{ann_return:.2%}")
-        st.metric("Annualized Volatility", f"{ann_vol:.2%}")
-        st.write(f"**{N}σ Return Range:** {low_ann:.2%} → {high_ann:.2%}")
-        st.write(f"**Implied 1y Price:** ${low_price:,.2f} → ${high_price:,.2f}")
-        st.write(f"**CAGR (start→end):** {0 if np.isnan(cagr) else cagr:.2%}")
-
-    # Rolling annualized volatility
-    st.markdown("### 📉 Rolling Annualized Volatility")
-    roll_vol = rolling_annual_vol(rets, int(roll_vol_window), ppy)
-    fig2, ax2 = plt.subplots()
-    ax2.plot(roll_vol.index, roll_vol.values)
-    ax2.set_xlabel("Date")
-    ax2.set_ylabel("Annualized Volatility")
-    st.pyplot(fig2, clear_figure=True)
-
-    # Histogram of returns with normal overlay
-    st.markdown(f"### 🧰 Distribution of {freq} Returns")
-    mu = rets.mean()
-    sigma = rets.std()
-    fig3, ax3 = plt.subplots()
-    ax3.hist(rets.values, bins=50, density=True, alpha=0.6)
-    # Normal overlay
-    x = np.linspace(rets.min()*1.2, rets.max()*1.2, 400)
-    norm_pdf = (1/(sigma*np.sqrt(2*np.pi))) * np.exp(-0.5*((x - mu)/sigma)**2)
-    ax3.plot(x, norm_pdf)
-    ax3.set_xlabel("Return")
-    ax3.set_ylabel("Density")
-    st.pyplot(fig3, clear_figure=True)
-
-    # Monte Carlo price cone
-    st.markdown("### 🌀 Monte Carlo Price Cone (1 Year)")
-    paths = simulate_gbm_paths(S0=last_price, mu=ann_return, sigma=ann_vol, days=252, n_paths=int(n_paths))
-    pc = np.percentile(paths, [5, 25, 50, 75, 95], axis=1)  # 5-95 fan
-    t = np.arange(paths.shape[0])
-
-    fig4, ax4 = plt.subplots()
-    ax4.fill_between(t, pc[0], pc[4], alpha=0.2, label="5–95%")
-    ax4.fill_between(t, pc[1], pc[3], alpha=0.3, label="25–75%")
-    ax4.plot(t, pc[2], label="Median")
-    ax4.set_xlabel("Trading Days Ahead")
-    ax4.set_ylabel("Simulated Price")
-    ax4.legend()
-    st.pyplot(fig4, clear_figure=True)
-
-    # Downloads: detailed series
-    ret_df = pd.DataFrame({
-        "price": px,
-        f"{freq}_return": rets
-    })
-    download_df_button(ret_df, f"{focus}_price_returns.csv", f"⬇️ Download {focus} price & returns")
-
+# =========================
+# Analysis
+# =========================
+if not go:
+    st.info("Set your options in the left sidebar and click **Run Analysis**. Try AAPL / MSFT / AMZN.")
 else:
-    st.info("Set your options in the sidebar and click **Analyze**. Try multiple tickers (e.g., `AAPL, MSFT, AMZN`).")
+    px = get_price_series(ticker, start_date, end_date)
+    if px.empty:
+        st.error("No data found. Try another ticker or a wider date range.")
+        st.stop()
 
+    last_price = float(px.iloc[-1])
+    rets_d = compute_returns(px, use_log=use_log)
+    if rets_d.empty:
+        st.error("Not enough data to compute returns.")
+        st.stop()
+
+    mean_d, std_d = float(rets_d.mean()), float(rets_d.std())
+    ann_return, ann_vol = annualize_from_daily(mean_d, std_d, use_log=use_log)
+    growth_cagr = cagr(px)
+
+    # Ranges
+    r_day_lo, r_day_hi = horizon_range_from_daily(mean_d, std_d, 1, N, use_log)
+    r_mon_lo, r_mon_hi = horizon_range_from_daily(mean_d, std_d, DAYS_PER_MONTH, N, use_log)
+    r_yr_lo,  r_yr_hi  = horizon_range_from_daily(mean_d, std_d, PPY, N, use_log)
+
+    # =========================
+    # Stat cards row
+    # =========================
+    def colored_value(val, pos_class="green", neg_class="red"):
+        if pd.isna(val): return f'<span class="value">—</span>'
+        return f'<span class="value {"green" if val >= 0 else "red"}">{val:.2%}</span>'
+
+    st.markdown('<div class="grid-4">', unsafe_allow_html=True)
+    st.markdown(f"""
+      <div class="card"><div class="label">Last Price</div><div class="value gold">${last_price:,.2f}</div></div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"""
+      <div class="card"><div class="label">CAGR (start → end)</div>{colored_value(0 if np.isnan(growth_cagr) else growth_cagr)}</div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"""
+      <div class="card"><div class="label">Annualized Return</div>{colored_value(ann_return)}</div>
+    """, unsafe_allow_html=True)
+    st.markdown(f"""
+      <div class="card"><div class="label">Annualized Volatility</div><span class="value">{ann_vol:.2%}</span></div>
+    """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # =========================
+    # Ranges Section
+    # =========================
+    st.markdown(f'<div class="section-title">🎯 Expected Total Return Ranges (±{N}σ)</div>', unsafe_allow_html=True)
+
+    def tile_html(title, low_r, high_r):
+        low_price = last_price * (1 + low_r)
+        high_price = last_price * (1 + high_r)
+        invest_low = invest_amt * (1 + low_r) if invest_amt > 0 else None
+        invest_high = invest_amt * (1 + high_r) if invest_amt > 0 else None
+        invest_line = ""
+        if invest_amt > 0:
+            invest_line = f'<div class="pill gold">💵 ${invest_amt:,.0f} → ${invest_low:,.0f} → ${invest_high:,.0f}</div>'
+        return f"""
+        <div class="tile">
+          <h3>{title} <span class="badge">{'Log' if use_log else 'Simple'} returns</span></h3>
+          <div class="pill red">📉 Min return: {low_r:.2%}</div>
+          <div class="pill green">📈 Max return: {high_r:.2%}</div>
+          <div class="pill">💲 Price range: ${low_price:,.2f} → ${high_price:,.2f}</div>
+          {invest_line}
+        </div>
+        """
+
+    st.markdown('<div class="grid-3">', unsafe_allow_html=True)
+    st.markdown(tile_html("Day", r_day_lo, r_day_hi), unsafe_allow_html=True)
+    st.markdown(tile_html("Month (~21 trading days)", r_mon_lo, r_mon_hi), unsafe_allow_html=True)
+    st.markdown(tile_html("Year (252 trading days)", r_yr_lo, r_yr_hi), unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # =========================
+    # Price history (dark block)
+    # =========================
+    st.markdown('<div class="section-title">📊 Price History</div>', unsafe_allow_html=True)
+    st.markdown('<div class="block">', unsafe_allow_html=True)
+    st.line_chart(px.rename("Price"))
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # =========================
+    # Return Distribution
+    # =========================
+    st.markdown('<div class="section-title">📉 Return Distribution (Daily)</div>', unsafe_allow_html=True)
+    st.caption("Histogram of daily returns with a normal curve overlay. Toggle log/simple returns in the sidebar.")
+    st.markdown('<div class="block">', unsafe_allow_html=True)
+
+    mu, sigma = rets_d.mean(), rets_d.std()
+    if sigma == 0 or np.isnan(sigma):
+        st.write("Not enough variability to plot a distribution.")
+    else:
+        x = np.linspace(rets_d.min()*1.2, rets_d.max()*1.2, 500)
+        norm_pdf = (1/(sigma*np.sqrt(2*np.pi))) * np.exp(-0.5*((x - mu)/sigma)**2)
+
+        fig_hist, axh = plt.subplots()
+        axh.hist(rets_d.values, bins=60, density=True, alpha=0.65)
+        axh.plot(x, norm_pdf)
+        axh.set_xlabel("Daily Return" + (" (log)" if use_log else " (simple)"))
+        axh.set_ylabel("Density")
+        st.pyplot(fig_hist, clear_figure=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # =========================
+    # Monte Carlo Cone (1y)
+    # =========================
+    st.markdown('<div class="section-title">🌀 Monte Carlo Price Cone (1 Year)</div>', unsafe_allow_html=True)
+    st.caption("Simulated price paths using annualized return & volatility. Shaded areas show typical outcomes.")
+    paths = mc_price_cone(last_price, ann_return, ann_vol, days=PPY, paths=mc_paths)
+
+    if paths is None:
+        st.warning("Could not simulate paths — check the inputs.")
+    else:
+        pct = np.percentile(paths, [5, 25, 50, 75, 95], axis=1)
+        t = np.arange(paths.shape[0])
+
+        fig, ax = plt.subplots()
+        ax.fill_between(t, pct[0], pct[4], alpha=0.2, label="5–95% band")
+        ax.fill_between(t, pct[1], pct[3], alpha=0.3, label="25–75% band")
+        ax.plot(t, pct[2], label="Median (50th pct)")
+        ax.set_xlabel("Trading Days Ahead")
+        ax.set_ylabel("Simulated Price")
+        ax.legend(loc="best")
+        st.pyplot(fig, clear_figure=True)
+
+        end5, end25, end50, end75, end95 = pct[0, -1], pct[1, -1], pct[2, -1], pct[3, -1], pct[4, -1]
+        st.markdown(f"""
+        <div class="grid-3" style="margin-top:10px;">
+          <div class="tile"><h3>Median Outcome</h3><div class="pill gold">Price ≈ ${end50:,.2f}</div></div>
+          <div class="tile"><h3>Typical Range (25–75%)</h3><div class="pill">Price ≈ ${end25:,.2f} → ${end75:,.2f}</div></div>
+          <div class="tile"><h3>Wide Range (5–95%)</h3><div class="pill">Price ≈ ${end5:,.2f} → ${end95:,.2f}</div></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # =========================
+    # Notes
+    # =========================
+    st.markdown('<div class="section-title">ℹ️ Notes</div>', unsafe_allow_html=True)
+    st.markdown("""
+- Ranges use historical daily mean and volatility scaled to each horizon.  
+- **Log returns** are generally more consistent for compounding.  
+- ±σ ranges assume roughly normal returns (markets can exceed these).  
+- Monte Carlo cone is **illustrative**, not a forecast.  
+""")
+
+
+    
+
+       
 
     
 
