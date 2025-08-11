@@ -36,22 +36,14 @@ section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] span { 
     unsafe_allow_html=True,
 )
 
-# =======================
-# Constants
-# =======================
 TRADING_DAYS_PER_MONTH = 21
 TRADING_DAYS_PER_YEAR = 252
 NORMAL_SIGMA_TO_PCTS = {1: (15.865, 84.135), 2: (2.275, 97.725), 3: (0.135, 99.865)}
 
-# =======================
-# Helpers
-# =======================
 def get_price_series(ticker: str, start_date, end_date) -> pd.Series:
-    """Always return a 1D float Series of prices with a DatetimeIndex. Handles single/multi-index frames from yfinance."""
     df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
     if df is None or len(df) == 0:
         return pd.Series(dtype=float)
-
     if isinstance(df.columns, pd.MultiIndex):
         sub = None
         for lvl0 in ("Adj Close", "Close"):
@@ -66,18 +58,15 @@ def get_price_series(ticker: str, start_date, end_date) -> pd.Series:
         if col is None:
             return pd.Series(dtype=float)
         s = df[col]
-
     s = pd.to_numeric(s.squeeze(), errors="coerce").dropna()
     s.index = pd.to_datetime(s.index)
     return s.astype(float)
-
 
 def compute_returns(price: pd.Series, use_log: bool) -> pd.Series:
     if price.empty or len(price) < 3:
         return pd.Series(dtype=float)
     rets = np.log(price / price.shift(1)) if use_log else price.pct_change()
     return rets.dropna().astype(float)
-
 
 def safe_cagr(price: pd.Series) -> float:
     if len(price) < 2:
@@ -90,22 +79,15 @@ def safe_cagr(price: pd.Series) -> float:
         return np.nan
     return float((end / start) ** (1 / years) - 1)
 
-
 def pick_horizons(n_trading_days: int):
     if n_trading_days < 15:
         return [("Day", 1)]
     elif n_trading_days < 40:
         return [("Day", 1), ("Month (~21d)", TRADING_DAYS_PER_MONTH)]
     else:
-        return [
-            ("Day", 1),
-            ("Month (~21d)", TRADING_DAYS_PER_MONTH),
-            ("Year (252d)", TRADING_DAYS_PER_YEAR),
-        ]
-
+        return [("Day", 1), ("Month (~21d)", TRADING_DAYS_PER_MONTH), ("Year (252d)", TRADING_DAYS_PER_YEAR)]
 
 def compounded_window_returns(price_series: pd.Series, window_days: int, use_log: bool) -> pd.Series:
-    """Overlapping compounded total returns for a fixed window."""
     if window_days <= 0 or len(price_series) <= window_days:
         return pd.Series(dtype=float)
     if use_log:
@@ -117,19 +99,15 @@ def compounded_window_returns(price_series: pd.Series, window_days: int, use_log
         roll_prod = (1 + sr).rolling(window_days).apply(lambda x: np.prod(x), raw=True).dropna()
         return (roll_prod - 1).astype(float)
 
-
 def empirical_band(price_series: pd.Series, window_days: int, N: int, use_log: bool):
-    """Quantile band from actual data; None if too few samples."""
     pct_lo, pct_hi = NORMAL_SIGMA_TO_PCTS.get(N, (15.865, 84.135))
     rets = compounded_window_returns(price_series, window_days, use_log)
-    if len(rets) < 30:  # need a bit of sample depth
+    if len(rets) < 30:
         return None
     lo = float(np.nanpercentile(rets, pct_lo))
     hi = float(np.nanpercentile(rets, pct_hi))
-    return lo, hi  # no arbitrary clamp
+    return lo, hi
 
-
-# ---- LOG-SPACE parametric fallbacks (no clamp) ----
 def logspace_band_from_daily(mu_d_log: float, sd_d_log: float, periods: int, N: int):
     mu_h = mu_d_log * periods
     sd_h = sd_d_log * np.sqrt(periods)
@@ -137,19 +115,15 @@ def logspace_band_from_daily(mu_d_log: float, sd_d_log: float, periods: int, N: 
     high = np.expm1(mu_h + N * sd_h)
     return float(low), float(high)
 
-
 def year_band_from_cagr_log(cagr: float, sd_d_log: float, N: int):
-    mu_year = np.log1p(cagr)  # ln(1 + CAGR)
+    mu_year = np.log1p(cagr)
     sd_year = sd_d_log * np.sqrt(TRADING_DAYS_PER_YEAR)
     low = np.expm1(mu_year - N * sd_year)
     high = np.expm1(mu_year + N * sd_year)
     return float(low), float(high)
 
-
-# ===== UI helpers for a cleaner top dashboard =====
 def fmt_pct(x: float) -> str:
     return "—" if x is None or np.isnan(x) else f"{x:.2%}"
-
 
 def render_metric(title: str, value: str, subtitle: str = "") -> str:
     return f"""
@@ -159,7 +133,6 @@ def render_metric(title: str, value: str, subtitle: str = "") -> str:
       <div class="sub">{subtitle}</div>
     </div>
     """
-
 
 def render_tile(title: str, low_r, high_r, last_price, invest_amt) -> str:
     low_r = float(low_r)
@@ -183,9 +156,6 @@ def render_tile(title: str, low_r, high_r, last_price, invest_amt) -> str:
     </div>
     """
 
-# =======================
-# Sidebar
-# =======================
 st.sidebar.header("Settings")
 ticker = st.sidebar.text_input("Ticker", "AAPL").strip().upper()
 start_date = st.sidebar.date_input("Start Date", value=date(2023, 1, 1))
@@ -194,132 +164,62 @@ use_log = st.sidebar.checkbox("Use Log Returns (affects charts/empirical bands)"
 N = st.sidebar.selectbox("Std Dev Multiplier (N)", [1, 2, 3], index=1)
 invest_amt = st.sidebar.number_input("Investment Amount ($)", value=0, step=100)
 
-# =======================
-# Analysis
-# =======================
 try:
     px = get_price_series(ticker, start_date, end_date)
     if px.empty or len(px) < 2:
         st.error("Not enough data for the selected period.")
     else:
         last_price = float(px.iloc[-1])
-
-        # For charts/empirical: user-selected return type
         rets_d = compute_returns(px, use_log=use_log)
         if rets_d.empty:
             st.error("Not enough data to compute returns.")
         else:
-            # Daily stats for the chosen return type
             mean_d = float(rets_d.mean())
             std_d = float(rets_d.std())
-
-            # Always use daily LOG stats for volatility & parametrics
             rets_log = np.log(px / px.shift(1)).dropna()
-mu_d_log = float(rets_log.mean())
-sd_d_log = float(rets_log.std())
-ann_vol_log = sd_d_log * np.sqrt(TRADING_DAYS_PER_YEAR)  # Annualized volatility
-
-# 20-day moving average (MA20) of daily log returns for yearly range
-rets_log_ma20 = rets_log.rolling(20).mean().dropna()
-mu_d_log_ma20 = float(rets_log_ma20.mean()) if len(rets_log_ma20) else np.nan
-sd_d_log_ma20 = float(rets_log_ma20.std()) if len(rets_log_ma20) else np.nan
-avg_ret_ma20_annual = np.expm1(mu_d_log_ma20 * TRADING_DAYS_PER_YEAR) if not np.isnan(mu_d_log_ma20) else np.nan
-
+            mu_d_log = float(rets_log.mean())
+            sd_d_log = float(rets_log.std())
+            ann_vol_log = sd_d_log * np.sqrt(TRADING_DAYS_PER_YEAR)
+            # MA20 for yearly range
+            rets_log_ma20 = rets_log.rolling(20).mean().dropna()
+            mu_d_log_ma20 = float(rets_log_ma20.mean()) if len(rets_log_ma20) else np.nan
+            sd_d_log_ma20 = float(rets_log_ma20.std()) if len(rets_log_ma20) else np.nan
+            avg_ret_ma20_annual = np.expm1(mu_d_log_ma20 * TRADING_DAYS_PER_YEAR) if not np.isnan(mu_d_log_ma20) else np.nan
             growth_cagr = safe_cagr(px)
 
-            # =======================
-            # TOP: Clean Key Dashboard
-            # =======================
             st.markdown('<div class="section-title">📌 Key Dashboard</div>', unsafe_allow_html=True)
             st.markdown('<div class="grid-4">', unsafe_allow_html=True)
-
-            st.markdown(
-                render_metric(
-                    "Ticker",
-                    value=ticker,
-                    subtitle=f"{start_date.strftime('%Y-%m-%d')} → {end_date.strftime('%Y-%m-%d')}"
-                ),
-                unsafe_allow_html=True,
-            )
-
-            st.markdown(
-                render_metric(
-                    "CAGR (start→end)",
-                    value=fmt_pct(growth_cagr),
-                    subtitle="Compound annual growth over your selected dates",
-                ),
-                unsafe_allow_html=True,
-            )
-
-            st.markdown(
-                render_metric(
-                    "Annualized Volatility",
-                    value=fmt_pct(ann_vol_log),
-                    subtitle="From daily log returns × √252",
-                ),
-                unsafe_allow_html=True,
-            )
-
-            st.markdown(
-                render_metric(
-                    "Last Price",
-                    value=f"${last_price:,.2f}",
-                    subtitle="Auto-adjusted close",
-                ),
-                unsafe_allow_html=True,
-            )
-
-            st.markdown(
-                render_metric(
-                    "Average Return (MA20, annualized)",
-                    value=fmt_pct(avg_ret_ma20_annual),
-                    subtitle="From 20 day moving avg of daily log returns",
-                ),
-                unsafe_allow_html=True,
-            )
-
+            st.markdown(render_metric("Ticker", value=ticker, subtitle=f"{start_date.strftime('%Y-%m-%d')} → {end_date.strftime('%Y-%m-%d')}"), unsafe_allow_html=True)
+            st.markdown(render_metric("CAGR (start→end)", value=fmt_pct(growth_cagr), subtitle="Compound annual growth over your selected dates"), unsafe_allow_html=True)
+            st.markdown(render_metric("Annualized Volatility", value=fmt_pct(ann_vol_log), subtitle="From daily log returns × √252"), unsafe_allow_html=True)
+            st.markdown(render_metric("Last Price", value=f"${last_price:,.2f}", subtitle="Auto-adjusted close"), unsafe_allow_html=True)
+            st.markdown(render_metric("Average Return (MA20, annualized)", value=fmt_pct(avg_ret_ma20_annual), subtitle="From 20 day moving avg of daily log returns"), unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # =======================
-            # Ranges (Empirical first; fallback to log-space parametric)
-            # =======================
             n_trading_days = len(rets_d)
             horizons = pick_horizons(n_trading_days)
             st.markdown(f'<div class="section-title">🎯 Expected Total Return Ranges (±{int(N)}σ)</div>', unsafe_allow_html=True)
             st.markdown('<div class="grid-3">', unsafe_allow_html=True)
-
             for label, periods in horizons:
-                # For YEAR horizon: use MA20-smoothed daily log stats to form the range
                 if periods == TRADING_DAYS_PER_YEAR and not np.isnan(mu_d_log_ma20) and not np.isnan(sd_d_log_ma20):
                     low_r, high_r = logspace_band_from_daily(mu_d_log_ma20, sd_d_log_ma20, periods, int(N))
                 else:
                     band = empirical_band(px, periods, int(N), use_log)
                     if band is None:
-                        # Parametric fallback in LOG space
                         if periods == TRADING_DAYS_PER_YEAR and not np.isnan(growth_cagr):
                             low_r, high_r = year_band_from_cagr_log(growth_cagr, sd_d_log, int(N))
                         else:
                             low_r, high_r = logspace_band_from_daily(mu_d_log, sd_d_log, periods, int(N))
                     else:
                         low_r, high_r = band
-
-                st.markdown(
-                    render_tile(label, low_r, high_r, last_price, invest_amt),
-                    unsafe_allow_html=True,
-                )
+                st.markdown(render_tile(label, low_r, high_r, last_price, invest_amt), unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # =======================
-            # Price History
-            # =======================
             st.markdown('<div class="section-title">📊 Price History</div>', unsafe_allow_html=True)
             st.markdown('<div class="block">', unsafe_allow_html=True)
             st.line_chart(px.rename("Price"))
             st.markdown('</div>', unsafe_allow_html=True)
 
-            # =======================
-            # Distribution (chosen return type)
-            # =======================
             st.markdown('<div class="section-title">📉 Distribution of Daily Returns</div>', unsafe_allow_html=True)
             st.caption("Histogram of daily returns with a normal curve overlay (based on your log/simple choice above).")
             mu, sigma = mean_d, std_d
@@ -334,7 +234,7 @@ avg_ret_ma20_annual = np.expm1(mu_d_log_ma20 * TRADING_DAYS_PER_YEAR) if not np.
                 ax.set_xlabel("Daily Return" + (" (log)" if use_log else " (simple)"))
                 ax.set_ylabel("Density")
                 st.pyplot(fig, clear_figure=True)
-
 except Exception as e:
     st.error(f"Error loading data: {e}")
+
 
