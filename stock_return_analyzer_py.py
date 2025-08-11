@@ -215,9 +215,15 @@ try:
 
             # Always use daily LOG stats for volatility & parametrics
             rets_log = np.log(px / px.shift(1)).dropna()
-            mu_d_log = float(rets_log.mean())
-            sd_d_log = float(rets_log.std())
-            ann_vol_log = sd_d_log * np.sqrt(TRADING_DAYS_PER_YEAR)  # Annualized volatility
+mu_d_log = float(rets_log.mean())
+sd_d_log = float(rets_log.std())
+ann_vol_log = sd_d_log * np.sqrt(TRADING_DAYS_PER_YEAR)  # Annualized volatility
+
+# 20-day moving average (MA20) of daily log returns for yearly range
+rets_log_ma20 = rets_log.rolling(20).mean().dropna()
+mu_d_log_ma20 = float(rets_log_ma20.mean()) if len(rets_log_ma20) else np.nan
+sd_d_log_ma20 = float(rets_log_ma20.std()) if len(rets_log_ma20) else np.nan
+avg_ret_ma20_annual = np.expm1(mu_d_log_ma20 * TRADING_DAYS_PER_YEAR) if not np.isnan(mu_d_log_ma20) else np.nan
 
             growth_cagr = safe_cagr(px)
 
@@ -263,6 +269,15 @@ try:
                 unsafe_allow_html=True,
             )
 
+            st.markdown(
+                render_metric(
+                    "Average Return (MA20, annualized)",
+                    value=fmt_pct(avg_ret_ma20_annual),
+                    subtitle="From 20 day moving avg of daily log returns",
+                ),
+                unsafe_allow_html=True,
+            )
+
             st.markdown('</div>', unsafe_allow_html=True)
 
             # =======================
@@ -274,15 +289,19 @@ try:
             st.markdown('<div class="grid-3">', unsafe_allow_html=True)
 
             for label, periods in horizons:
-                band = empirical_band(px, periods, int(N), use_log)
-                if band is None:
-                    # Parametric fallback in LOG space
-                    if periods == TRADING_DAYS_PER_YEAR and not np.isnan(growth_cagr):
-                        low_r, high_r = year_band_from_cagr_log(growth_cagr, sd_d_log, int(N))
-                    else:
-                        low_r, high_r = logspace_band_from_daily(mu_d_log, sd_d_log, periods, int(N))
+                # For YEAR horizon: use MA20-smoothed daily log stats to form the range
+                if periods == TRADING_DAYS_PER_YEAR and not np.isnan(mu_d_log_ma20) and not np.isnan(sd_d_log_ma20):
+                    low_r, high_r = logspace_band_from_daily(mu_d_log_ma20, sd_d_log_ma20, periods, int(N))
                 else:
-                    low_r, high_r = band
+                    band = empirical_band(px, periods, int(N), use_log)
+                    if band is None:
+                        # Parametric fallback in LOG space
+                        if periods == TRADING_DAYS_PER_YEAR and not np.isnan(growth_cagr):
+                            low_r, high_r = year_band_from_cagr_log(growth_cagr, sd_d_log, int(N))
+                        else:
+                            low_r, high_r = logspace_band_from_daily(mu_d_log, sd_d_log, periods, int(N))
+                    else:
+                        low_r, high_r = band
 
                 st.markdown(
                     render_tile(label, low_r, high_r, last_price, invest_amt),
@@ -319,5 +338,3 @@ try:
 except Exception as e:
     st.error(f"Error loading data: {e}")
 
-
-       
